@@ -1,12 +1,16 @@
 import numpy as np
 import tensorflow as tf
-
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
 # ──────────────── Global configuration ────────────────
 # Lorenz system parameter
 A = 0.9
 B = 1.5
 C = 1.7
 
+#A = 10
+#B = 28
+#C = 8/3
 # Initial conditions (later: chaotic / not chaotic)
 INITIAL_CONDITIONS = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
@@ -159,15 +163,11 @@ def train(model, t_initial, initial_conditions):
         print("Training finished!")
 
 
-# CAUTION: Following code was produced by AI
-
-if __name__ == "__main__":
-    # 1) Netzwerk bauen
-    model = build_network()
-
-    # 2) RK45-Referenzlösung erzeugen
-    from scipy.integrate import solve_ivp
-
+def ref_solution():
+    """
+    Berechnet die Referenzlösung des Lorenz-Systems mit solve_ivp (RK45).
+    Gibt die Zeitpunkte und die Lösung zurück.
+    """
     def lorenz_rhs(t, y):
         x, y_, z = y
         return [A*(y_ - x),
@@ -176,41 +176,63 @@ if __name__ == "__main__":
 
     t_span = (t_min, t_max)
     t_eval = np.linspace(t_min, t_max, 1000)
-    sol = solve_ivp(lorenz_rhs,
-                    t_span,
-                    INITIAL_CONDITIONS,
-                    t_eval=t_eval,
-                    rtol=1e-9,
-                    atol=1e-9)
+    sol = solve_ivp(
+        lorenz_rhs,
+        t_span,
+        INITIAL_CONDITIONS,
+        t_eval=t_eval,
+        rtol=1e-9,
+        atol=1e-9
+    )
+    return t_eval, sol
 
-    # 3) PINN trainieren
-    train(model,
-          t_initial=t_min,
-          initial_conditions=INITIAL_CONDITIONS)
-
-    # 4) PINN-Vorhersage abfragen
+def pinn_predict(model, t_eval):
+    """
+    Wendet das trainierte PINN auf die Zeitpunkte t_eval an und gibt die Vorhersage zurück.
+    """
     t_plot = tf.convert_to_tensor(t_eval.reshape(-1,1), dtype=tf.float32)
-    y_pinn = model(t_plot).numpy()      # Form: [1000,3]
+    y_pinn = model(t_plot).numpy()
+    return y_pinn
 
-    # 5) Plot: RK45 vs PINN
-    import matplotlib.pyplot as plt
-    plt.figure(figsize=(12,8))
-
+def plot_results(t_eval, sol, y_pinn):
+    plt.figure(figsize=(12,8)) 
     labels = ['x','y','z']
     for i in range(3):
         plt.subplot(3,1,i+1)
+        # Referenzlösung (RK45) plotten
         plt.plot(t_eval, sol.y[i],  'k-', label="RK45 (Referenz)")
+        # PINN-Vorhersage plotten
         plt.plot(t_eval, y_pinn[:,i],'r--', label="PINN")
         plt.ylabel(labels[i])
         if i==0:
+            # Titel nur im ersten Subplot
             plt.title("Vergleich PINN vs. RK45 für das Lorenz-System")
         if i==2:
+            # x-Achsenbeschriftung nur im letzten Subplot
             plt.xlabel("t")
         plt.legend(loc='best')
-
     plt.tight_layout()
     plt.show()
+
+def main():
+    # 1) Netzwerk bauen
+    model = build_network()
+
+    # 2) Referenzlösung berechnen
+    t_eval, sol = ref_solution()
+
+    # 3) PINN trainieren
+    train(model, t_initial=t_min, initial_conditions=INITIAL_CONDITIONS)
+
+    # 4) PINN-Vorhersage abfragen
+    y_pinn = pinn_predict(model, t_eval)
+
+    # 5) Plot: RK45 vs PINN
+    plot_results(t_eval, sol, y_pinn)
 
     print("Beispielhafte PINN-Ausgabe:")
     print("##########################")
     print(y_pinn[:5])
+
+if __name__ == "__main__":
+    main()
