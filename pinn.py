@@ -165,8 +165,8 @@ def train(model, t_initial, initial_conditions):
 
 def ref_solution():
     """
-    Berechnet die Referenzlösung des Lorenz-Systems mit solve_ivp (RK45).
-    Gibt die Zeitpunkte und die Lösung zurück.
+    Calculates the reference solution of the Lorenz system using solve_ivp (RK45).
+    Returns the time points and the solution.
     """
     def lorenz_rhs(t, y):
         x, y_, z = y
@@ -188,7 +188,7 @@ def ref_solution():
 
 def pinn_predict(model, t_eval):
     """
-    Wendet das trainierte PINN auf die Zeitpunkte t_eval an und gibt die Vorhersage zurück.
+    Applies the trained PINN to the time points t_eval and returns the prediction.
     """
     t_plot = tf.convert_to_tensor(t_eval.reshape(-1,1), dtype=tf.float32)
     y_pinn = model(t_plot).numpy()
@@ -199,38 +199,38 @@ def plot_results(t_eval, sol, y_pinn):
     labels = ['x','y','z']
     for i in range(3):
         plt.subplot(3,1,i+1)
-        # Referenzlösung (RK45) plotten
-        plt.plot(t_eval, sol.y[i],  'k-', label="RK45 (Referenz)")
-        # PINN-Vorhersage plotten
+        # Plot reference solution (RK45)
+        plt.plot(t_eval, sol.y[i],  'k-', label="RK45 (Reference)")
+        # Plot PINN prediction
         plt.plot(t_eval, y_pinn[:,i],'r--', label="PINN")
         plt.ylabel(labels[i])
         if i==0:
-            # Titel nur im ersten Subplot
-            plt.title("Vergleich PINN vs. RK45 für das Lorenz-System")
+            # Title only in the first subplot
+            plt.title("Comparison PINN vs. RK45 for the Lorenz system")
         if i==2:
-            # x-Achsenbeschriftung nur im letzten Subplot
+            # x-axis label only in the last subplot
             plt.xlabel("t")
         plt.legend(loc='best')
     plt.tight_layout()
     plt.show()
 
 def main():
-    # 1) Netzwerk bauen
+    # 1) Build network
     model = build_network()
 
-    # 2) Referenzlösung berechnen
+    # 2) Calculate reference solution
     t_eval, sol = ref_solution()
 
-    # 3) PINN trainieren
+    # 3) Train PINN
     train(model, t_initial=t_min, initial_conditions=INITIAL_CONDITIONS)
 
-    # 4) PINN-Vorhersage abfragen
+    # 4) Query PINN prediction
     y_pinn = pinn_predict(model, t_eval)
 
     # 5) Plot: RK45 vs PINN
     plot_results(t_eval, sol, y_pinn)
 
-    print("Beispielhafte PINN-Ausgabe:")
+    print("Example PINN output:")
     print("##########################")
     print(y_pinn[:5])
 
