@@ -33,6 +33,10 @@ t_min, t_max = 0.0, 10.0
 
 # ──────────────── Lorenz system ────────────────
 def lorenz_system(x, y, z):
+    """
+    Calculates the derivatives of the Lorenz system for given x, y, z and current parameters A, B, C.
+    Returns dx/dt, dy/dt, dz/dt.
+    """
     dxdt = A * (y - x)
     dydt = x * (B - z) - y
     dzdt = x * y - C * z
@@ -41,6 +45,9 @@ def lorenz_system(x, y, z):
 
 # ──────────────── Build network ────────────────
 def build_network():
+    """
+    Builds and returns the neural network model for the PINN.
+    """
     # NOTE: seeds?
     model = tf.keras.Sequential()
 
@@ -58,12 +65,20 @@ def build_network():
 
 # ──────────────── Loss functions ────────────────
 def sample_collocation():
+    """
+    Samples random collocation points in the time domain for physics loss calculation.
+    Returns a tensor of shape (COLLOCATION_POINTS, 1).
+    """
     t_collocation = t_min + (t_max - t_min) * np.random.rand(COLLOCATION_POINTS)
     t_collocation = np.expand_dims(t_collocation, axis=1)
     t_collocation = tf.convert_to_tensor(t_collocation, dtype=tf.float32)
     return t_collocation
 
 def physics_loss(model, t_collocation):
+    """
+    Calculates the physics loss by comparing the model's derivatives with the Lorenz system equations at the collocation points.
+    Returns the mean squared error of the residuals.
+    """
     with tf.GradientTape(persistent=True) as tape:
         tape.watch(t_collocation)
         pred = model(t_collocation)  
@@ -93,12 +108,20 @@ def physics_loss(model, t_collocation):
 #     return initial_condition_loss
 
 def data_loss(model, t_data, y_data):
+    """
+    Calculates the mean squared error between the model's prediction and the noisy data.
+    Returns the data loss.
+    """
     pred = model(t_data)
     return tf.reduce_mean((pred - y_data)**2)
 
 # ──────────────── Training step ────────────────
 @tf.function
 def train_step(model, t0, y0, t_collocation, t_data, y_data, alpha):
+    """
+    Performs a single training step: computes losses, gradients, and updates the model weights and Lorenz parameters.
+    Returns the total loss, physics loss, and data loss.
+    """
     with tf.GradientTape() as tape:
         #loss_ic = initial_condition_loss(model, t0, y0) // not needed in reverse problem
         loss_phys = physics_loss(model, t_collocation)
@@ -114,6 +137,10 @@ def train_step(model, t0, y0, t_collocation, t_data, y_data, alpha):
 
 # ──────────────── Training function ────────────────
 def train(model, t0, y0, t_data, y_data):
+    """
+    Trains the PINN model and Lorenz parameters over multiple epochs using the specified optimizer and learning rate schedule.
+    Prints progress and loss values during training.
+    """
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         initial_learning_rate=LEARNING_RATE,
         decay_steps=1000,
@@ -126,11 +153,12 @@ def train(model, t0, y0, t_data, y_data):
         if epoch % 1000 == 0:
             print(f"Epoch {epoch}: Total={loss}, Physics_loss={phys}, Data_loss={data:}, A={A.numpy()}, B={B.numpy()}, C={C.numpy()}")
 
-# ──────────────── Main ────────────────
-# CAUTION: Following code was produced by AI
-
-if __name__ == "__main__":
-    # RK45 Daten erzeugen (Ground truth)
+# ──────────────── Data generation and evaluation ────────────────
+def generate_reference_data():
+    """
+    Generates RK45 reference data (ground truth) for the Lorenz system.
+    Returns t_eval and the solution object.
+    """
     true_A, true_B, true_C = 10, 20, 2.6667
 
     def rhs(t, y):
@@ -141,9 +169,13 @@ if __name__ == "__main__":
 
     t_eval = np.linspace(t_min, t_max, 1000)
     sol = solve_ivp(rhs, (t_min, t_max), INITIAL_CONDITIONS, t_eval=t_eval, rtol=1e-9, atol=1e-9, dense_output=True)
+    return t_eval, sol, true_A, true_B, true_C
 
-
-    # Datenpunkte mit Rauschen
+def generate_noisy_data(sol):
+    """
+    Generates noisy data points from the reference solution.
+    Returns t_data and xyz_data as tensors.
+    """
     n_data = 100
     t_data_np = np.linspace(t_min, t_max, n_data).reshape(-1, 1)
     xyz_np = sol.sol(t_data_np.flatten()).T
@@ -152,16 +184,16 @@ if __name__ == "__main__":
 
     t_data = tf.convert_to_tensor(t_data_np, dtype=tf.float32)
     xyz_data = tf.convert_to_tensor(xyz_noisy, dtype=tf.float32)
+    return t_data, xyz_data
 
-    # Modell trainieren
-    model = build_network()
-    train(model, t0=t_min, y0=INITIAL_CONDITIONS, t_data=t_data, y_data=xyz_data)
-
-    # Modell auswerten
+def evaluate_and_plot(model, t_eval, sol, true_A, true_B, true_C):
+    """
+    Evaluates the trained model and plots the results compared to the reference solution.
+    Also prints the estimated and true parameters.
+    """
     t_plot = tf.convert_to_tensor(t_eval.reshape(-1,1), dtype=tf.float32)
     y_pred = model(t_plot).numpy()
 
-    # Plot Ergebnisse
     plt.figure(figsize=(12, 8))
     labels = ['x', 'y', 'z']
     for i in range(3):
@@ -180,4 +212,24 @@ if __name__ == "__main__":
     print(f"Geschätzte Parameter: A={A.numpy():.4f}, B={B.numpy():.4f}, C={C.numpy():.4f}")
     plt.show()
 
-    
+def main():
+    """
+    Main routine: generates data, builds and trains the model, evaluates predictions, and plots results.
+    """
+    # 1) Generate reference data
+    t_eval, sol, true_A, true_B, true_C = generate_reference_data()
+
+    # 2) Generate noisy data
+    t_data, xyz_data = generate_noisy_data(sol)
+
+    # 3) Build and train model
+    model = build_network()
+    train(model, t0=t_min, y0=INITIAL_CONDITIONS, t_data=t_data, y_data=xyz_data)
+
+    # 4) Evaluate and plot results
+    evaluate_and_plot(model, t_eval, sol, true_A, true_B, true_C)
+
+if __name__ == "__main__":
+    main()
+
+

@@ -42,6 +42,10 @@ def lorenz_system(x, y, z):
 
 # ──────────────── Build network ────────────────
 def build_network():
+    """
+    Builds the neural network model for the PINN.
+    """
+
     # NOTE: seeds?
     model = tf.keras.Sequential()
 
@@ -62,12 +66,20 @@ def build_network():
 # NOTE: Add normalization functions
 
 def sample_collocation():
+    """
+    Samples random collocation points in the time domain for physics loss calculation.
+    Returns a tensor of shape (COLLOCATION_POINTS, 1).
+    """
     t_collocation = t_min + (t_max - t_min) * np.random.rand(COLLOCATION_POINTS)
     t_collocation = np.expand_dims(t_collocation, axis=1)
     t_collocation = tf.convert_to_tensor(t_collocation, dtype=tf.float32)
     return t_collocation
 
 def y_pred_function(model, t_collocation):
+    """
+    Computes the model prediction for the given collocation time points.
+    Returns the predicted values.
+    """
     with tf.GradientTape() as t:
         t.watch(t_collocation)
         y_pred = model(t_collocation)
@@ -76,22 +88,10 @@ def y_pred_function(model, t_collocation):
 
 # ──────────────── Build network ────────────────
 def physics_loss(model, t_collocation):
-    # # initialize GradientTape for automatic differentiation
-    # with tf.GradientTape(persistent=True) as t:
-    #     t.watch(t_collocation) # derivatives for all time points
-    #     pred = model(t_collocation) # prediction of x,y,z for all time points
-
-    # # calculate "true" derivatives by inserting predictions into lorenz system equations
-    # jac_matrix = t.batch_jacobian(pred, t_collocation)
-    # derivatives_pred = tf.squeeze(jac_matrix, axis=2)  
-
-    # x_pred, y_pred, z_pred = tf.unstack(pred, axis=1)
-    # dxdt_pred, dydt_pred, dzdt_pred = tf.unstack(derivatives_pred, axis=1)
-    # dxdt_true, dydt_true, dzdt_true = lorenz_system(x_pred, y_pred, z_pred)
-
-    # # Residuen
-    # physics_loss = tf.reduce_mean((dxdt_true - dxdt_pred)**2 + (dydt_true - dydt_pred)**2 + (dzdt_true - dzdt_pred)**2)
-    # return physics_loss
+    """
+    Calculates the physics loss by comparing the model's derivatives with the Lorenz system equations at the collocation points.
+    Returns the mean squared error of the residuals.
+    """
     with tf.GradientTape(persistent=True) as tape:
         tape.watch(t_collocation)
         pred = model(t_collocation)  
@@ -112,6 +112,10 @@ def physics_loss(model, t_collocation):
     return physics_loss
 
 def initial_condition_loss(model, t_initial, initial_conditions):
+    """
+    Calculates the loss between the model's prediction and the true initial conditions.
+    Returns the mean squared error at the initial time.
+    """
     t_initial_tensor = tf.constant([[t_initial]], dtype = tf.float32)
     initial_conditions_pred = model(t_initial_tensor)
 
@@ -124,6 +128,10 @@ def initial_condition_loss(model, t_initial, initial_conditions):
 # ──────────────── Training step ────────────────
 @tf.function # NOTE: maybe use model.trainable_variables instead of model.weights
 def train_step(model, t_initial, initial_conditions, t_collocation, alpha):
+    """
+    Performs a single training step: computes losses, gradients, and updates the model weights.
+    Returns the total loss, initial condition loss, and physics loss.
+    """
     with tf.GradientTape() as t: # NOTE: persistent=true if you want e.g. adaptive weighing of alpha -> reference Sophie Steger code
         loss_ic = initial_condition_loss(model, t_initial, initial_conditions)
         loss_phys = physics_loss(model, t_collocation)
@@ -135,32 +143,33 @@ def train_step(model, t_initial, initial_conditions, t_collocation, alpha):
     return loss, loss_ic, loss_phys # NOTE: maybe return phy+ic loss seperately for analysis
 
 def train(model, t_initial, initial_conditions):
-         
-        # learning rate schedule
-        lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=LEARNING_RATE,
-            decay_steps=1000,
-            decay_rate=DECAY_RATE)  
-                                
-        # Adam optimizer with default settings for momentum
-        model.optimizer = OPTIMIZER(learning_rate=lr_schedule) 
-
-        print("Training started...")
-        for epoch in range(EPOCHS):
-            # DEBUG
-            # if epoch < 2000:
-            #     alpha = 1.0
-            # else:
-            #     alpha = ALPHA_DATA
-            t_collocation = sample_collocation() 
-
-            # perform one train step
-            step_loss, ic_loss, phy_loss = train_step(model, t_initial, initial_conditions, t_collocation, ALPHA_DATA)
-
-            if epoch % 1000 == 0:
-                print("Epoch", epoch, "Loss", step_loss, f"IC-Loss: {ic_loss} Physics_loss: {phy_loss}")
-                                
-        print("Training finished!")
+    """
+    Trains the PINN model over multiple epochs using the specified optimizer and learning rate schedule.
+    Prints progress and loss values during training.
+    """
+     
+    # learning rate schedule
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        initial_learning_rate=LEARNING_RATE,
+        decay_steps=1000,
+        decay_rate=DECAY_RATE)  
+                            
+    # Adam optimizer with default settings for momentum
+    model.optimizer = OPTIMIZER(learning_rate=lr_schedule) 
+    print("Training started...")
+    for epoch in range(EPOCHS):
+        # DEBUG
+        # if epoch < 2000:
+        #     alpha = 1.0
+        # else:
+        #     alpha = ALPHA_DATA
+        t_collocation = sample_collocation() 
+        # perform one train step
+        step_loss, ic_loss, phy_loss = train_step(model, t_initial, initial_conditions, t_collocation, ALPHA_DATA)
+        if epoch % 1000 == 0:
+            print("Epoch", epoch, "Loss", step_loss, f"IC-Loss: {ic_loss} Physics_loss: {phy_loss}")
+                            
+    print("Training finished!")
 
 
 def ref_solution():
@@ -195,6 +204,9 @@ def pinn_predict(model, t_eval):
     return y_pinn
 
 def plot_results(t_eval, sol, y_pinn):
+    """
+    Plots the reference solution and the PINN prediction for all three Lorenz system variables.
+    """
     plt.figure(figsize=(12,8)) 
     labels = ['x','y','z']
     for i in range(3):
@@ -215,6 +227,9 @@ def plot_results(t_eval, sol, y_pinn):
     plt.show()
 
 def main():
+    """
+    Main routine: builds the model, computes the reference solution, trains the PINN, predicts with the PINN, and plots the results.
+    """
     # 1) Build network
     model = build_network()
 
