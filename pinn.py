@@ -5,37 +5,40 @@ import matplotlib.pyplot as plt
 import pinn_helper_functions as phf
 import helper_functions as hf
 
-@tf.function
-def train_step(model, t_initial, initial_conditions, t_collocation, alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input):
-    """
-    Performs a single training step: computes losses, gradients, and updates the model weights and Lorenz parameters.
-    Returns the total loss, physics loss, and data / initial condition loss.
-    """
-    with tf.GradientTape() as tape:
-        # Berechne Physics-Loss und skaliere sie
-        loss_phys = phf.physics_loss(model, t_collocation, A, B, C, t_min, t_max, normalize_input)
-        loss_phys_scaled = loss_phys / tf.reduce_mean(loss_phys + 1e-8)  # Normalisierung
+def create_train_step():
+    # @tf.function decorater is wrapped by a method, otherwise creating more than one model instance won't be allowed by tf
+    @tf.function
+    def train_step(model, t_initial, initial_conditions, t_collocation, alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input):
+        """
+        Performs a single training step: computes losses, gradients, and updates the model weights and Lorenz parameters.
+        Returns the total loss, physics loss, and data / initial condition loss.
+        """
+        with tf.GradientTape() as tape:
+            # Berechne Physics-Loss und skaliere sie
+            loss_phys = phf.physics_loss(model, t_collocation, A, B, C, t_min, t_max, normalize_input)
+            loss_phys_scaled = loss_phys / tf.reduce_mean(loss_phys + 1e-8)  # Normalisierung
 
-        if data_active:
-            # Berechne Data-Loss
-            loss_data = phf.data_loss(model, t_data, y_data)
-            # Kombiniere die Verluste mit dynamischem Alpha
-            loss = alpha * loss_data + (1 - alpha) * loss_phys_scaled
-        else:
-            # Berechne Initial Condition Loss
-            loss_ic = phf.initial_condition_loss(model, t_initial, initial_conditions, t_min, t_max, normalize_input)
-            loss = alpha * loss_ic + (1 - alpha) * loss_phys_scaled
+            if data_active:
+                # Berechne Data-Loss
+                loss_data = phf.data_loss(model, t_data, y_data)
+                # Kombiniere die Verluste mit dynamischem Alpha
+                loss = alpha * loss_data + (1 - alpha) * loss_phys_scaled
+            else:
+                # Berechne Initial Condition Loss
+                loss_ic = phf.initial_condition_loss(model, t_initial, initial_conditions, t_min, t_max, normalize_input)
+                loss = alpha * loss_ic + (1 - alpha) * loss_phys_scaled
 
-        # Berechne Gradienten und wende Gradient Clipping an
-        grads = tape.gradient(loss, model.trainable_variables)
-        clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]  # Clipping
-        model.optimizer.apply_gradients(zip(clipped_grads, model.trainable_variables))
+            # Berechne Gradienten und wende Gradient Clipping an
+            grads = tape.gradient(loss, model.trainable_variables)
+            clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]  # Clipping
+            model.optimizer.apply_gradients(zip(clipped_grads, model.trainable_variables))
 
-        # Rückgabe der Verluste
-        if data_active:
-            return loss, loss_data, loss_phys
-        else:
-            return loss, loss_ic, loss_phys
+            # Rückgabe der Verluste
+            if data_active:
+                return loss, loss_data, loss_phys
+            else:
+                return loss, loss_ic, loss_phys
+    return train_step
 
 # ──────────────── Train function ────────────────
 def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocation_points, alpha, learning_rate, decay_rate, epochs, optimizer_class, normalize_input, data_active, t_data, y_data):
@@ -44,6 +47,9 @@ def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocati
         decay_steps=1000,
         decay_rate=decay_rate)
     model.optimizer = optimizer_class(learning_rate=lr_schedule)
+
+    # Verwende die train_step-Funktion aus create_train_step
+    train_step = create_train_step()
 
     print("Training started...")
 
