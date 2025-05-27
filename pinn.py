@@ -5,32 +5,37 @@ import matplotlib.pyplot as plt
 import pinn_helper_functions as phf
 import helper_functions as hf
 
+@tf.function
+def train_step(model, t_initial, initial_conditions, t_collocation, alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input):
+    """
+    Performs a single training step: computes losses, gradients, and updates the model weights and Lorenz parameters.
+    Returns the total loss, physics loss, and data / initial condition loss.
+    """
+    with tf.GradientTape() as tape:
+        # Berechne Physics-Loss und skaliere sie
+        loss_phys = phf.physics_loss(model, t_collocation, A, B, C, t_min, t_max, normalize_input)
+        loss_phys_scaled = loss_phys / tf.reduce_mean(loss_phys + 1e-8)  # Normalisierung
 
+        if data_active:
+            # Berechne Data-Loss
+            loss_data = phf.data_loss(model, t_data, y_data)
+            # Kombiniere die Verluste mit dynamischem Alpha
+            loss = alpha * loss_data + (1 - alpha) * loss_phys_scaled
+        else:
+            # Berechne Initial Condition Loss
+            loss_ic = phf.initial_condition_loss(model, t_initial, initial_conditions, t_min, t_max, normalize_input)
+            loss = alpha * loss_ic + (1 - alpha) * loss_phys_scaled
 
-# ──────────────── Create train_step with its own tf.function cache ────────────────
-def create_train_step():
-    # @tf.function decorater is wrapped by a method, otherwise creating more than one model instance won't be allowed by tf
-    @tf.function
-    def train_step(model, t_initial, initial_conditions, t_collocation, alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input):
-        """
-        Performs a single training step: computes losses, gradients, and updates the model weights and Lorenz parameters.
-        Returns the total loss, physics loss, and data / initial condition loss.
-        """
-        with tf.GradientTape() as tape:
-            loss_phys = phf.physics_loss(model, t_collocation, A, B, C, t_min, t_max, normalize_input)
-            if data_active:
-                loss_data = phf.data_loss(model, t_data, y_data)
-                loss = alpha * loss_data + (1 - alpha) * loss_phys
-                grads = tape.gradient(loss, model.trainable_variables)
-                model.optimizer.apply_gradients(zip(grads, model.trainable_variables))  
-                return loss, loss_data, loss_phys
-            else:
-                loss_ic = phf.initial_condition_loss(model, t_initial, initial_conditions, t_min, t_max, normalize_input)
-                loss = alpha * loss_ic + (1 - alpha) * loss_phys
-                grads = tape.gradient(loss, model.trainable_variables)
-                model.optimizer.apply_gradients(zip(grads, model.trainable_variables))
-                return loss, loss_ic, loss_phys  
-    return train_step
+        # Berechne Gradienten und wende Gradient Clipping an
+        grads = tape.gradient(loss, model.trainable_variables)
+        clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]  # Clipping
+        model.optimizer.apply_gradients(zip(clipped_grads, model.trainable_variables))
+
+        # Rückgabe der Verluste
+        if data_active:
+            return loss, loss_data, loss_phys
+        else:
+            return loss, loss_ic, loss_phys
 
 # ──────────────── Train function ────────────────
 def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocation_points, alpha, learning_rate, decay_rate, epochs, optimizer_class, normalize_input, data_active, t_data, y_data):
@@ -40,17 +45,23 @@ def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocati
         decay_rate=decay_rate)
     model.optimizer = optimizer_class(learning_rate=lr_schedule)
 
-    train_step = create_train_step()
-
     print("Training started...")
+
     for epoch in range(epochs):
+        # Dynamische Anpassung von Alpha
+        dynamic_alpha = max(0.1, alpha * (1 - epoch / epochs))  # Reduziere Alpha über die Zeit
+
+        # Collocation-Punkte neu sampeln
         t_collocation = phf.sample_collocation(t_min, t_max, collocation_points, normalize_input)
-        step_loss, ic_loss, phy_loss = train_step(model, t_initial, initial_conditions, t_collocation, alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input)
-        if epoch % 1000 == 0:
-            if not data_active:
-                print(f"Epoch {epoch} Loss: {step_loss} | IC-Loss: {ic_loss} | Physics-Loss: {phy_loss}")
-            else:
-                print(f"Epoch {epoch} Loss: {step_loss} | Data-Loss: {ic_loss} | Physics-Loss: {phy_loss}")
+
+        # Führe einen Trainingsschritt aus
+        step_loss, ic_or_data_loss, phy_loss = train_step(
+            model, t_initial, initial_conditions, t_collocation, dynamic_alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input
+        )
+
+        # Ausgabe alle 100 Epochen
+        if epoch % 1000 == 0 or epoch == epochs - 1:
+            print(f"Epoch {epoch:5d} | Loss: {step_loss:.4e} | Data/IC-Loss: {ic_or_data_loss:.4e} | Physics-Loss: {phy_loss:.4e}")
 
     print("Training finished!")
 
@@ -83,9 +94,7 @@ def plot_results(t_eval, sol, y_pinn):
 #NOTE: not needed for jupyter notebook, remove later on
 def main():
     # System Parameter
-    A = 1
-    B = 1
-    C = 1
+    A, B, C = 10, 28, 8/3  # Lorenz system parameters
     INITIAL_CONDITIONS = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
     # Time domain
@@ -93,25 +102,28 @@ def main():
 
     # PINN Architektur
     HIDDEN_LAYER = 6
-    NEURONS_PER_LAYER = 30
-    ACTIVATION_FUNCTION = tf.keras.activations.silu
-    WEIGHT_INITIALIZATION = tf.keras.initializers.GlorotUniform
+    NEURONS_PER_LAYER = 50  # Erhöhe die Anzahl der Neuronen
+    ACTIVATION_FUNCTION = tf.keras.activations.tanh
+    WEIGHT_INITIALIZATION = tf.keras.initializers.HeNormal  # Verwende He-Normal-Initialisierung
 
     # Trainings-Hyperparameter
-    LEARNING_RATE = 0.01
-    DECAY_RATE = 0.09
+    LEARNING_RATE = 0.01  # Reduziere die Anfangslernrate
+    DECAY_RATE = 0.5  # Verlangsamt die Abnahme der Lernrate
     OPTIMIZER = tf.keras.optimizers.Adam
-    EPOCHS = 5000
-    COLLOCATION_POINTS = 1024
-    ALPHA_DATA = 0.5
-    NORMALIZE_INPUT = False
+    EPOCHS = 5000  # Erhöhe die Anzahl der Epochen
+    COLLOCATION_POINTS = 10000  # Erhöhe die Anzahl der Collocation-Punkte
+    ALPHA_DATA = 0.1  # Physics-Loss stärker gewichten
+    NORMALIZE_INPUT = True
     DATA_ACTIVE = True
 
     # Create reference solution
     t_eval, sol = hf.ref_solution(A, B, C, t_min, t_max, INITIAL_CONDITIONS)
 
     # Add noise to reference solution
-    t_data, y_data = hf.generate_noisy_data(sol, t_min, t_max)
+    try:
+        t_data, y_data = hf.generate_noisy_data(sol, t_min, t_max, noise_std=0.01)
+    except TypeError:
+        t_data, y_data = hf.generate_noisy_data(sol, t_min, t_max)
 
     if NORMALIZE_INPUT:
         t_data = phf.normalize_time(t_data, t_min, t_max)
