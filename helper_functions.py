@@ -22,7 +22,7 @@ def ref_solution(A, B, C, t_min, t_max, initial_conditions):
     )
     return t_eval, sol
 
-def generate_noisy_data(sol, t_min, t_max):
+def generate_noisy_data(sol, t_min, t_max, noise_factor):
     """
     Generates noisy data points from the reference solution.
     Returns t_data and xyz_data as tensors.
@@ -30,7 +30,7 @@ def generate_noisy_data(sol, t_min, t_max):
     n_data = 100
     t_data_np = np.linspace(t_min, t_max, n_data).reshape(-1, 1)
     xyz_np = sol.sol(t_data_np.flatten()).T
-    noise = 0.1 * np.random.randn(*xyz_np.shape)
+    noise = noise_factor * np.random.randn(*xyz_np.shape)
     xyz_noisy = xyz_np + noise
 
     t_data = tf.convert_to_tensor(t_data_np, dtype=tf.float32)
@@ -48,7 +48,7 @@ def generate_noisy_data_with_gap(sol, t_min, t_max, gap_start, gap_end):
     for t, xyz in zip(t_np, xyz_np):
         if t < gap_start or t > gap_end:
             t_kept.append([t])
-            xyz_kept.append(xyz)       
+            xyz_kept.append(xyz)
 
     t_data_gap = tf.convert_to_tensor(t_kept, dtype=tf.float32)
     xyz_data_gap = tf.convert_to_tensor(xyz_kept, dtype=tf.float32)
@@ -57,11 +57,11 @@ def generate_noisy_data_with_gap(sol, t_min, t_max, gap_start, gap_end):
 
 def generate_partial_noisy_data(y_data, column='x'):
     match column:
-        case 'x': 
+        case 'x':
             y_partial_data = y_data[:, 0:1]
-        case 'y': 
+        case 'y':
             y_partial_data = y_data[:, 1:2]
-        case 'z': 
+        case 'z':
             y_partial_data = y_data[:, 2:3]
     print("Test")
     return y_partial_data

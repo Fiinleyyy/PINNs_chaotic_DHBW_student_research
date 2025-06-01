@@ -6,23 +6,34 @@ import matplotlib.pyplot as plt
 import helper_functions as hf
 import pinn_helper_functions as phf
 
+import logging
+
+logging.basicConfig(
+    filename="training_log.txt",
+    level=logging.INFO,
+    format="%(asctime)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+
 # ──────────────── Training Step ────────────────
 def create_train_step():
     @tf.function
-    def train_step(model, t0, y0, t_collocation, t_data, y_data, alpha, A, B, C, t_min, t_max, normalize_input):
+    def train_step(model, t0, y0, t_collocation, t_data, y_data, alpha, A, B, C, t_min, t_max, normalize_input, trainable_parameters):
         with tf.GradientTape() as tape:
             loss_phys = phf.physics_loss(model, t_collocation, A, B, C, t_min, t_max, normalize_input)
             loss_data = phf.data_loss(model, t_data, y_data)
             total_loss = (1 - alpha) * loss_phys + alpha * loss_data
 
-        variables = model.trainable_variables + [A, B, C]
+        variables = model.trainable_variables + trainable_parameters
         grads = tape.gradient(total_loss, variables)
         model.optimizer.apply_gradients(zip(grads, variables))
-        return total_loss, loss_data, loss_phys, 
+        return total_loss, loss_data, loss_phys,
     return train_step
 
 # ──────────────── Training Function ────────────────
-def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocation_points, alpha, learning_rate, decay_rate, epochs, optimizer_class, normalize_input, t_data, y_data):
+def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocation_points, alpha, learning_rate, decay_rate, epochs, optimizer_class, normalize_input, t_data, y_data, trainable_parameters):
+    print(B)
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         initial_learning_rate=learning_rate,
         decay_steps=1000,
@@ -47,9 +58,14 @@ def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocati
             C,
             t_min,
             t_max,
-            normalize_input
+            normalize_input,
+            trainable_parameters
         )
-
+        if epoch % 10 == 0:
+            log_entry = (
+             f"Epoch {epoch}: Total={step_loss}, Physics={phy_loss}, Data={data_loss}, A={A.numpy():.4f}, B={B.numpy():.4f}, C={C.numpy():.4f}"
+            )
+            logging.info(log_entry)
         if epoch % 1000 == 0:
             print(f"Epoch {epoch}: Total={step_loss}, Physics={phy_loss}, Data={data_loss}, A={A.numpy():.4f}, B={B.numpy():.4f}, C={C.numpy():.4f}")
 
@@ -87,7 +103,8 @@ def main():
     WEIGHT_INITIALIZATION = tf.keras.initializers.GlorotUniform
 
     # Trainings-Hyperparameter
-    LEARNING_RATE = 0.01
+    LEARNING_RATE = 0.05
+
     DECAY_RATE = 0.09
     OPTIMIZER = tf.keras.optimizers.Adam
     EPOCHS = 5000
@@ -100,17 +117,17 @@ def main():
     t_min, t_max = 0.0, 10.0
 
     # Trainable parameters
-    A = tf.Variable(1.0, dtype=tf.float32, trainable=True, name="A")
+    A = tf.Variable(10.0, dtype=tf.float32, trainable=False, name="A")
     B = tf.Variable(1.0, dtype=tf.float32, trainable=True, name="B")
-    C = tf.Variable(1.0, dtype=tf.float32, trainable=True, name="C")
+    C = tf.Variable(2.667, dtype=tf.float32, trainable=False, name="C")
 
     # System parameters (cusotmizable by programmer)
-    True_A, True_B, True_C = 1, 1, 1
+    True_A, True_B, True_C = 10, 5, 8/3
     INITIAL_CONDITIONS = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
     # Create reference and noisy data
     t_eval, sol = hf.ref_solution(True_A, True_B, True_C, t_min, t_max, INITIAL_CONDITIONS)
-    t_data, y_data = hf.generate_noisy_data(sol, t_min, t_max)
+    t_data, y_data = hf.generate_noisy_data(sol, t_min, t_max, 0.1)
 
     # Build model
     model = phf.build_pinn_network(HIDDEN_LAYER, NEURONS_PER_LAYER, ACTIVATION_FUNCTION, WEIGHT_INITIALIZATION)
@@ -130,7 +147,8 @@ def main():
         optimizer_class=OPTIMIZER,
         normalize_input=NORMALIZE_INPUT,
         t_data=t_data,
-        y_data=y_data
+        y_data=y_data,
+        trainable_parameters = [B]
     )
 
     # Evaluate and plot

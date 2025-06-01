@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import layers, regularizers, initializers, Sequential
+from tensorflow.keras import layers, regularizers, initializers, Sequential, callbacks
 
 def build_standard_nn(hidden_layer, neurons_per_layer, activation_function, weight_initializer):
     model = tf.keras.Sequential()
@@ -26,3 +26,15 @@ def build_l2_regularized_nn(hidden_layer, neurons_per_layer, activation_function
             name=f"hidden_{i}"))
     model.add(tf.keras.layers.Dense(units=3, activation=None, kernel_initializer=weight_initializer(), name="output"))
     return model
+
+
+class LossStatusCallback(callbacks.Callback):
+
+    def __init__(self, number_epochs):
+        super().__init__()
+        self.number_epochs = number_epochs
+
+    def on_epoch_end(self, epoch, logs=None):
+        if (epoch + 1) % self.number_epochs == 0:
+            loss = logs.get("loss")
+            print(f"Epoch {epoch + 1}: loss = {loss:.5f}")

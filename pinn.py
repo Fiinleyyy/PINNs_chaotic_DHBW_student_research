@@ -22,14 +22,14 @@ def create_train_step():
                 loss_data = phf.data_loss(model, t_data, y_data)
                 loss = alpha * loss_data + (1 - alpha) * loss_phys
                 grads = tape.gradient(loss, model.trainable_variables)
-                model.optimizer.apply_gradients(zip(grads, model.trainable_variables))  
+                model.optimizer.apply_gradients(zip(grads, model.trainable_variables))
                 return loss, loss_data, loss_phys
             else:
                 loss_ic = phf.initial_condition_loss(model, t_initial, initial_conditions, t_min, t_max, normalize_input)
                 loss = alpha * loss_ic + (1 - alpha) * loss_phys
                 grads = tape.gradient(loss, model.trainable_variables)
                 model.optimizer.apply_gradients(zip(grads, model.trainable_variables))
-                return loss, loss_ic, loss_phys  
+                return loss, loss_ic, loss_phys
     return train_step
 
 # ──────────────── Train function ────────────────
@@ -54,13 +54,16 @@ def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocati
 
     print("Training finished!")
 
-def pinn_predict(model, t_eval, t_min, t_max, normalize_input):
+def pinn_predict(model, t_eval, t_min, t_max, normalize_input, A, B, C):
     if normalize_input:
         t_norm = phf.normalize_time(t_eval.reshape(-1,1), t_min, t_max)
     else:
         t_norm = t_eval.reshape(-1,1)
     t_plot = tf.convert_to_tensor(t_norm, dtype=tf.float32)
-    return model(t_plot).numpy()
+
+    loss_phys = phf.physics_loss(model, t_plot, A, B, C, t_min, t_max, normalize_input)
+
+    return (model(t_plot).numpy(), loss_phys)
 
 def plot_results(t_eval, sol, y_pinn):
     #NOTE this function not needed for jupyter notebook, just in case if pinn.py is desired to be ran directly
