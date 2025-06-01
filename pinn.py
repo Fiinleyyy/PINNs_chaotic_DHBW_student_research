@@ -1,12 +1,26 @@
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
+import random
 
 import pinn_helper_functions as phf
 import helper_functions as hf
 
+def set_seed(seed=42):
+    """
+    Sets the global seed for reproducibility across random, numpy, and TensorFlow.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+
 def create_train_step():
-    # @tf.function decorater is wrapped by a method, otherwise creating more than one model instance won't be allowed by tf
+    """
+    Creates a TensorFlow function for performing a single training step.
+    Computes losses, gradients, and updates model weights and Lorenz parameters.
+    Returns the total loss, physics loss, and data/initial condition loss.
+    """
+    # @tf.function decorator is wrapped by a method, otherwise creating more than one model instance won't be allowed by TensorFlow
     @tf.function
     def train_step(model, t_initial, initial_conditions, t_collocation, alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input):
         """
@@ -14,26 +28,26 @@ def create_train_step():
         Returns the total loss, physics loss, and data / initial condition loss.
         """
         with tf.GradientTape() as tape:
-            # Berechne Physics-Loss und skaliere sie
+            # Compute physics loss and scale it
             loss_phys = phf.physics_loss(model, t_collocation, A, B, C, t_min, t_max, normalize_input)
-            loss_phys_scaled = loss_phys / tf.reduce_mean(loss_phys + 1e-8)  # Normalisierung
+            loss_phys_scaled = loss_phys / tf.reduce_mean(loss_phys + 1e-8)  # Normalization
 
             if data_active:
-                # Berechne Data-Loss
+                # Compute data loss
                 loss_data = phf.data_loss(model, t_data, y_data)
-                # Kombiniere die Verluste mit dynamischem Alpha
+                # Combine the losses with dynamic alpha
                 loss = alpha * loss_data + (1 - alpha) * loss_phys_scaled
             else:
-                # Berechne Initial Condition Loss
+                # Compute initial condition loss
                 loss_ic = phf.initial_condition_loss(model, t_initial, initial_conditions, t_min, t_max, normalize_input)
                 loss = alpha * loss_ic + (1 - alpha) * loss_phys_scaled
 
-            # Berechne Gradienten und wende Gradient Clipping an
+            # Compute gradients and apply gradient clipping
             grads = tape.gradient(loss, model.trainable_variables)
             clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]  # Clipping
             model.optimizer.apply_gradients(zip(clipped_grads, model.trainable_variables))
 
-            # Rückgabe der Verluste
+            # Return the losses
             if data_active:
                 return loss, loss_data, loss_phys
             else:
@@ -42,36 +56,46 @@ def create_train_step():
 
 # ──────────────── Train function ────────────────
 def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocation_points, alpha, learning_rate, decay_rate, epochs, optimizer_class, normalize_input, data_active, t_data, y_data):
+    """
+    Trains the PINN model using physics-informed and data-driven losses.
+    Dynamically adjusts alpha and resamples collocation points during training.
+    Outputs training progress every 1000 epochs.
+    """
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         initial_learning_rate=learning_rate,
         decay_steps=1000,
         decay_rate=decay_rate)
     model.optimizer = optimizer_class(learning_rate=lr_schedule)
 
-    # Verwende die train_step-Funktion aus create_train_step
+    # Use the train_step function from create_train_step
     train_step = create_train_step()
 
     print("Training started...")
 
     for epoch in range(epochs):
-        # Dynamische Anpassung von Alpha
-        dynamic_alpha = max(0.1, alpha * (1 - epoch / epochs))  # Reduziere Alpha über die Zeit
+        # Dynamic adjustment of alpha
+        dynamic_alpha = max(0.1, alpha * (1 - epoch / epochs))  # Reduce alpha over time
 
-        # Collocation-Punkte neu sampeln
+        # Resample collocation points
         t_collocation = phf.sample_collocation(t_min, t_max, collocation_points, normalize_input)
 
-        # Führe einen Trainingsschritt aus
+        # Perform a training step
         step_loss, ic_or_data_loss, phy_loss = train_step(
             model, t_initial, initial_conditions, t_collocation, dynamic_alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input
         )
 
-        # Ausgabe alle 100 Epochen
+        # Output every 1000 epochs
         if epoch % 1000 == 0 or epoch == epochs - 1:
             print(f"Epoch {epoch:5d} | Loss: {step_loss:.4e} | Data/IC-Loss: {ic_or_data_loss:.4e} | Physics-Loss: {phy_loss:.4e}")
 
     print("Training finished!")
 
 def pinn_predict(model, t_eval, t_min, t_max, normalize_input):
+    """
+    Predicts the solution of the Lorenz system using the trained PINN model.
+    Normalizes input time values if specified.
+    Returns the predicted values as a numpy array.
+    """
     if normalize_input:
         t_norm = phf.normalize_time(t_eval.reshape(-1,1), t_min, t_max)
     else:
@@ -80,7 +104,11 @@ def pinn_predict(model, t_eval, t_min, t_max, normalize_input):
     return model(t_plot).numpy()
 
 def plot_results(t_eval, sol, y_pinn):
-    #NOTE this function not needed for jupyter notebook, just in case if pinn.py is desired to be ran directly
+    """
+    Plots the comparison between the reference solution (RK45) and the PINN predictions.
+    Displays results for x, y, and z components of the Lorenz system.
+    """
+    # NOTE this function is not needed for Jupyter notebook, just in case if pinn.py is desired to be run directly
     plt.figure(figsize=(12,8))
     labels = ['x','y','z']
     for i in range(3):
@@ -97,28 +125,33 @@ def plot_results(t_eval, sol, y_pinn):
     plt.show()
 
 # ──────────────── Main Routine ──────────────
-#NOTE: not needed for jupyter notebook, remove later on
+# NOTE: not needed for Jupyter notebook, remove later on
 def main():
-    # System Parameter
+    """
+    Main routine for training and evaluating the PINN model.
+    Sets the seed, defines system parameters, builds the model, trains it, and plots results.
+    """
+    set_seed(42)
+    # System parameters
     A, B, C = 10, 28, 8/3  # Lorenz system parameters
     INITIAL_CONDITIONS = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
     # Time domain
     t_min, t_max = 0.0, 10.0
 
-    # PINN Architektur
+    # PINN architecture
     HIDDEN_LAYER = 6
-    NEURONS_PER_LAYER = 50  # Erhöhe die Anzahl der Neuronen
-    ACTIVATION_FUNCTION = tf.keras.activations.tanh
-    WEIGHT_INITIALIZATION = tf.keras.initializers.HeNormal  # Verwende He-Normal-Initialisierung
+    NEURONS_PER_LAYER = 30  # Increase the number of neurons
+    ACTIVATION_FUNCTION = tf.keras.activations.silu
+    WEIGHT_INITIALIZATION = tf.keras.initializers.HeNormal  # Use He-Normal initialization
 
-    # Trainings-Hyperparameter
-    LEARNING_RATE = 0.01  # Reduziere die Anfangslernrate
-    DECAY_RATE = 0.5  # Verlangsamt die Abnahme der Lernrate
+    # Training hyperparameters
+    LEARNING_RATE = 0.01  # Reduce the initial learning rate
+    DECAY_RATE = 0.8  # Slow down the decay rate of the learning rate
     OPTIMIZER = tf.keras.optimizers.Adam
-    EPOCHS = 5000  # Erhöhe die Anzahl der Epochen
-    COLLOCATION_POINTS = 10000  # Erhöhe die Anzahl der Collocation-Punkte
-    ALPHA_DATA = 0.1  # Physics-Loss stärker gewichten
+    EPOCHS = 5000  # Increase the number of epochs
+    COLLOCATION_POINTS = 4000  # Increase the number of collocation points
+    ALPHA_DATA = 0.1  # Give more weight to physics loss
     NORMALIZE_INPUT = True
     DATA_ACTIVE = True
 
@@ -134,10 +167,10 @@ def main():
     if NORMALIZE_INPUT:
         t_data = phf.normalize_time(t_data, t_min, t_max)
 
-    # Modell bauen
+    # Build model
     model = phf.build_pinn_network(HIDDEN_LAYER, NEURONS_PER_LAYER, ACTIVATION_FUNCTION, WEIGHT_INITIALIZATION)
 
-    # Trainieren
+    # Train
     train(
         model,
         t_initial=t_min,
@@ -163,4 +196,7 @@ def main():
     plot_results(t_eval, sol, y_pinn)
 
 if __name__ == "__main__":
+    """
+    Executes the main routine if the script is run directly.
+    """
     main()
