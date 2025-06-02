@@ -20,7 +20,6 @@ def create_train_step():
     Computes losses, gradients, and updates model weights and Lorenz parameters.
     Returns the total loss, physics loss, and data/initial condition loss.
     """
-    # @tf.function decorator is wrapped by a method, otherwise creating more than one model instance won't be allowed by TensorFlow
     @tf.function
     def train_step(model, t_initial, initial_conditions, t_collocation, alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input):
         """
@@ -42,7 +41,7 @@ def create_train_step():
                 loss_ic = phf.initial_condition_loss(model, t_initial, initial_conditions, t_min, t_max, normalize_input)
                 loss = alpha * loss_ic + (1 - alpha) * loss_phys_scaled
 
-            # Compute gradients and apply gradient clipping
+            # Compute gradients
             grads = tape.gradient(loss, model.trainable_variables)
             clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]  # Clipping
             model.optimizer.apply_gradients(zip(clipped_grads, model.trainable_variables))
@@ -58,7 +57,7 @@ def create_train_step():
 def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocation_points, alpha, learning_rate, decay_rate, epochs, optimizer_class, normalize_input, data_active, t_data, y_data):
     """
     Trains the PINN model using physics-informed and data-driven losses.
-    Dynamically adjusts alpha and resamples collocation points during training.
+    Uses a static alpha value throughout training.
     Outputs training progress every 1000 epochs.
     """
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
@@ -67,24 +66,16 @@ def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocati
         decay_rate=decay_rate)
     model.optimizer = optimizer_class(learning_rate=lr_schedule)
 
-    # Use the train_step function from create_train_step
     train_step = create_train_step()
 
     print("Training started...")
 
     for epoch in range(epochs):
-        # Dynamic adjustment of alpha
-        dynamic_alpha = max(0.1, alpha * (1 - epoch / epochs))  # Reduce alpha over time
-
-        # Resample collocation points
+        # Static alpha value
         t_collocation = phf.sample_collocation(t_min, t_max, collocation_points, normalize_input)
-
-        # Perform a training step
         step_loss, ic_or_data_loss, phy_loss = train_step(
-            model, t_initial, initial_conditions, t_collocation, dynamic_alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input
+            model, t_initial, initial_conditions, t_collocation, alpha, A, B, C, t_min, t_max, data_active, t_data, y_data, normalize_input
         )
-
-        # Output every 1000 epochs
         if epoch % 1000 == 0 or epoch == epochs - 1:
             print(f"Epoch {epoch:5d} | Loss: {step_loss:.4e} | Data/IC-Loss: {ic_or_data_loss:.4e} | Physics-Loss: {phy_loss:.4e}")
 
@@ -124,6 +115,23 @@ def plot_results(t_eval, sol, y_pinn):
     plt.tight_layout()
     plt.show()
 
+def compare_results(t_eval, sol, y_pinn):
+    """
+    Prints a numerical comparison between the RK45 solution and the PINN predictions.
+    Displays mean squared error for x, y, and z components and the average deviation across all axes.
+    """
+    mse_x = np.mean((sol.y[0] - y_pinn[:, 0])**2)
+    mse_y = np.mean((sol.y[1] - y_pinn[:, 1])**2)
+    mse_z = np.mean((sol.y[2] - y_pinn[:, 2])**2)
+
+    avg_deviation = np.mean([mse_x, mse_y, mse_z])
+
+    print("\nNumerical Comparison:")
+    print(f"Mean Squared Error (x): {mse_x:.4e}")
+    print(f"Mean Squared Error (y): {mse_y:.4e}")
+    print(f"Mean Squared Error (z): {mse_z:.4e}")
+    print(f"Average Deviation: {avg_deviation:.4e}")
+
 # ──────────────── Main Routine ──────────────
 # NOTE: not needed for Jupyter notebook, remove later on
 def main():
@@ -147,9 +155,9 @@ def main():
 
     # Training hyperparameters
     LEARNING_RATE = 0.01  # Reduce the initial learning rate
-    DECAY_RATE = 0.8  # Slow down the decay rate of the learning rate
+    DECAY_RATE = 0.9  # Slow down the decay rate of the learning rate
     OPTIMIZER = tf.keras.optimizers.Adam
-    EPOCHS = 5000  # Increase the number of epochs
+    EPOCHS = 15000  # Increase the number of epochs
     COLLOCATION_POINTS = 4000  # Increase the number of collocation points
     ALPHA_DATA = 0.1  # Give more weight to physics loss
     NORMALIZE_INPUT = True
@@ -178,7 +186,7 @@ def main():
         A=A, B=B, C=C,
         t_min=t_min, t_max=t_max,
         collocation_points=COLLOCATION_POINTS,
-        alpha=ALPHA_DATA,
+        alpha=ALPHA_DATA,  # Static alpha value
         learning_rate=LEARNING_RATE,
         decay_rate=DECAY_RATE,
         epochs=EPOCHS,
@@ -194,6 +202,9 @@ def main():
 
     # Plot
     plot_results(t_eval, sol, y_pinn)
+
+    # Numerical comparison
+    compare_results(t_eval, sol, y_pinn)
 
 if __name__ == "__main__":
     """
