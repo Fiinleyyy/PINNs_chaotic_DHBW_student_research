@@ -22,12 +22,11 @@ def ref_solution(A, B, C, t_min, t_max, initial_conditions):
     )
     return t_eval, sol
 
-def generate_noisy_data(sol, t_min, t_max, noise_factor):
+def generate_noisy_data(sol, t_min, t_max, noise_factor=0.2, n_data=100):
     """
     Generates noisy data points from the reference solution.
     Returns t_data and xyz_data as tensors.
     """
-    n_data = 100
     t_data_np = np.linspace(t_min, t_max, n_data).reshape(-1, 1)
     xyz_np = sol.sol(t_data_np.flatten()).T
     noise = noise_factor * np.random.randn(*xyz_np.shape)
@@ -37,8 +36,8 @@ def generate_noisy_data(sol, t_min, t_max, noise_factor):
     xyz_data = tf.convert_to_tensor(xyz_noisy, dtype=tf.float32)
     return t_data, xyz_data
 
-def generate_noisy_data_with_gap(sol, t_min, t_max, gap_start, gap_end):
-    t_data, xyz_data = generate_noisy_data(sol, t_min, t_max)
+def generate_noisy_data_with_gap(sol, t_min, t_max, gap_start, gap_end, noise_factor=0.2):
+    t_data, xyz_data = generate_noisy_data(sol, t_min, t_max, noise_factor)
 
     t_np = t_data.numpy().flatten()
     xyz_np = xyz_data.numpy()

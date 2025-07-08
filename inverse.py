@@ -19,9 +19,11 @@ logging.basicConfig(
 # ──────────────── Training Step ────────────────
 def create_train_step():
     @tf.function
-    def train_step(model, t0, y0, t_collocation, t_data, y_data, alpha, A, B, C, t_min, t_max, normalize_input, trainable_parameters):
+    def train_step(model, t0, y0, t_collocation, t_data, y_data, alpha, A, B, C, t_min, t_max, normalize_input, trainable_parameters, chaotic=False):
         with tf.GradientTape() as tape:
             loss_phys = phf.physics_loss(model, t_collocation, A, B, C, t_min, t_max, normalize_input)
+            if chaotic:
+                loss_phys = loss_phys / tf.reduce_mean(loss_phys + 1e-8)  # Normalisierung
             loss_data = phf.data_loss(model, t_data, y_data)
             total_loss = (1 - alpha) * loss_phys + alpha * loss_data
 
@@ -32,7 +34,7 @@ def create_train_step():
     return train_step
 
 # ──────────────── Training Function ────────────────
-def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocation_points, alpha, learning_rate, decay_rate, epochs, optimizer_class, normalize_input, t_data, y_data, trainable_parameters):
+def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocation_points, alpha, learning_rate, decay_rate, epochs, optimizer_class, normalize_input, t_data, y_data, trainable_parameters, chaotic=False):
     print(B)
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         initial_learning_rate=learning_rate,
@@ -59,7 +61,8 @@ def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocati
             t_min,
             t_max,
             normalize_input,
-            trainable_parameters
+            trainable_parameters,
+            chaotic
         )
         if epoch % 10 == 0:
             log_entry = (
@@ -103,18 +106,18 @@ def main():
     WEIGHT_INITIALIZATION = tf.keras.initializers.GlorotUniform
 
     # Trainings-Hyperparameter
-    LEARNING_RATE = 0.05
+    LEARNING_RATE = 0.01
 
-    DECAY_RATE = 0.09
+    DECAY_RATE = 0.8
     OPTIMIZER = tf.keras.optimizers.Adam
-    EPOCHS = 5000
-    COLLOCATION_POINTS = 1024
+    EPOCHS = 25000
+    COLLOCATION_POINTS = 4024
     ALPHA_DATA = 0.5
-    NORMALIZE_INPUT = False
+    NORMALIZE_INPUT = True
     DATA_ACTIVE = True
 
     # Time domain
-    t_min, t_max = 0.0, 10.0
+    t_min, t_max = 0.0, 15.0
 
     # Trainable parameters
     A = tf.Variable(10.0, dtype=tf.float32, trainable=False, name="A")
@@ -122,12 +125,12 @@ def main():
     C = tf.Variable(2.667, dtype=tf.float32, trainable=False, name="C")
 
     # System parameters (cusotmizable by programmer)
-    True_A, True_B, True_C = 10, 5, 8/3
-    INITIAL_CONDITIONS = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    True_A, True_B, True_C = 10, 0.5, 8/3
+    INITIAL_CONDITIONS = np.array([1, 1, 1], dtype=np.float32)
 
     # Create reference and noisy data
     t_eval, sol = hf.ref_solution(True_A, True_B, True_C, t_min, t_max, INITIAL_CONDITIONS)
-    t_data, y_data = hf.generate_noisy_data(sol, t_min, t_max, 0.1)
+    t_data, y_data = hf.generate_noisy_data(sol, t_min, t_max, 0.3)
 
     # Build model
     model = phf.build_pinn_network(HIDDEN_LAYER, NEURONS_PER_LAYER, ACTIVATION_FUNCTION, WEIGHT_INITIALIZATION)
@@ -148,7 +151,8 @@ def main():
         normalize_input=NORMALIZE_INPUT,
         t_data=t_data,
         y_data=y_data,
-        trainable_parameters = [B]
+        trainable_parameters = [B],
+        chaotic=True
     )
 
     # Evaluate and plot
