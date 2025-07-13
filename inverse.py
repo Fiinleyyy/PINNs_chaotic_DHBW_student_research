@@ -26,7 +26,6 @@ def create_train_step():
                 loss_phys = loss_phys / tf.reduce_mean(loss_phys + 1e-8)  # Normalisierung
             loss_data = phf.data_loss(model, t_data, y_data)
             total_loss = (1 - alpha) * loss_phys + alpha * loss_data
-
         variables = model.trainable_variables + trainable_parameters
         grads = tape.gradient(total_loss, variables)
         model.optimizer.apply_gradients(zip(grads, variables))
@@ -73,28 +72,46 @@ def train(model, t_initial, initial_conditions, A, B, C, t_min, t_max, collocati
             print(f"Epoch {epoch}: Total={step_loss}, Physics={phy_loss}, Data={data_loss}, A={A.numpy():.4f}, B={B.numpy():.4f}, C={C.numpy():.4f}")
 
 # ──────────────── Evaluation Function ────────────────
-def evaluate_and_plot(model, t_eval, sol, predicted_params, true_params):
-    A, B, C = predicted_params
-    true_A, true_B, true_C = true_params
+def evaluate_and_plot(model, t_eval, sol, predicted_params=None, true_params=None, initial_conditions=None):
+    # Konvertiere Zeit und berechne PINN-Vorhersage
     t_plot = tf.convert_to_tensor(t_eval.reshape(-1, 1), dtype=tf.float32)
     y_pred = model(t_plot).numpy()
 
+    # Plot-Setup
     plt.figure(figsize=(12, 8))
     labels = ['x', 'y', 'z']
+
+    # Subplots für x, y, z
     for i in range(3):
         plt.subplot(3, 1, i + 1)
         plt.plot(t_eval, sol.y[i], 'k-', label='RK45 (True)')
         plt.plot(t_eval, y_pred[:, i], 'r--', label='PINN Prediction')
         plt.ylabel(labels[i])
+
+        # Titel mit optionalen Parametern
         if i == 0:
-            plt.title("Inverse PINN für das Lorenz-System")
+            if true_params is not None and initial_conditions is not None:
+                ic_str = ', '.join([f'{v:.3f}' for v in initial_conditions])
+                title = f"Inverse PINN – IC: [{ic_str}], True $\\rho$ = {true_params[1]}"
+            else:
+                title = "Inverse PINN für das Lorenz-System"
+            plt.title(title)
+
         if i == 2:
             plt.xlabel("t")
+
         plt.legend()
+
     plt.tight_layout()
+
+    # Parameter-Ausgabe (optional)
     print("##################################")
-    print(f"Ground truth Parameter: A={true_A}, B={true_B}, C={true_C}")
-    print(f"Geschätzte Parameter: A={A.numpy():.4f}, B={B.numpy():.4f}, C={C.numpy():.4f}")
+    if true_params is not None:
+        print(f"Ground truth Parameter: A={true_params[0]}, B={true_params[1]}, C={true_params[2]}")
+    if predicted_params is not None:
+        print(f"Geschätzte Parameter: A={predicted_params[0].numpy():.4f}, "
+              f"B={predicted_params[1].numpy():.4f}, C={predicted_params[2].numpy():.4f}")
+
     plt.show()
 
 # ──────────────── Main Function ────────────────
