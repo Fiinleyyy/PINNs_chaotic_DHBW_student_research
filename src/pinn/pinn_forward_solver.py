@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-import . import pinn_utils as phf
+from . import pinn_utils as phf
 
 def create_train_step():
     """Creates and defines the train step of each epoch in training of PINN model regarding the forward problem."""
