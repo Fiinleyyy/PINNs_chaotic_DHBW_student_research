@@ -1,3 +1,4 @@
 __pycache__/
 venv/
 computation_graph_sigmoid_no_attr
+training_log.txt
